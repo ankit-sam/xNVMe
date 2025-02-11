@@ -60,6 +60,11 @@ archive_dep = cc.find_library(
   has_headers: ['archive.h'],
 )
 
+bsd_dep = cc.find_library(
+  'bsd',
+  has_headers: ['bsd/bsd.h'],
+)
+
 if get_option('build_subprojects') and not fs.exists('build')
   message('Patching ..')
   run_command('spdk_patches.sh', capture: true, check: true)
@@ -137,7 +142,7 @@ isal_libnames = get_option('build_subprojects') ? [
   'isal',
 ] : []
 
-spdk_deps = [dlfcn_dep, math_dep, numa_dep, uuid_dep, ssl_dep, ssl_dep, execinfo_dep, elf_dep, archive_dep,]
+spdk_deps = [dlfcn_dep, math_dep, numa_dep, uuid_dep, ssl_dep, ssl_dep, execinfo_dep, elf_dep, archive_dep, bsd_dep,]
 
 spdk_paths = []
 foreach libname : spdk_libnames + dpdk_libnames + isal_libnames
