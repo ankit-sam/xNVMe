@@ -13,5 +13,6 @@ extern struct xnvme_be xnvme_be_macos_driverkit;
 extern struct xnvme_be xnvme_be_ramdisk;
 extern struct xnvme_be xnvme_be_windows;
 extern struct xnvme_be xnvme_be_vfio;
+extern struct xnvme_be xnvme_be_bam;
 
 #endif /* __INTERNAL_XNVME_BE_REGISTRY_H */

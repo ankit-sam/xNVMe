@@ -21,6 +21,7 @@ static struct xnvme_be *g_xnvme_be_registry[] = {
 	&xnvme_be_windows,
 	&xnvme_be_ramdisk,
 	&xnvme_be_vfio,
+	&xnvme_be_bam,
 	NULL,
 };
 static int g_xnvme_be_count = sizeof g_xnvme_be_registry / sizeof *g_xnvme_be_registry - 1;

@@ -5,6 +5,12 @@
 xnvmelib_source += files(
   'xnvme_adm.c',
   'xnvme_be.c',
+  'xnvme_be_bam.cu',
+  'xnvme_be_bam_admin.cu',
+  'xnvme_be_bam_async.cu',
+  'xnvme_be_bam_dev.cu',
+  'xnvme_be_bam_mem.cu',
+  'xnvme_be_bam_sync.cu',
   'xnvme_be_cbi_admin_shim.c',
   'xnvme_be_cbi_async_emu.c',
   'xnvme_be_cbi_async_nil.c',
@@ -94,6 +100,8 @@ xnvmelib_deps = [
   spdk_dep,
   thread_dep,
   rt_dep,
+  libnvm_dep,
+  cuda_dep,
 ]
 
 mapfile = 'libxnvme.map'
