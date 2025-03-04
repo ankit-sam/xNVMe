@@ -14,3 +14,5 @@ if not is_windows
     install_dir: get_option('bindir')
   )
 endif
+
+subdir('third-party/skiplist/')

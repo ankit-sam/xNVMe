@@ -63,6 +63,9 @@ static const char *g_libconf_strings[] = {
 #ifdef XNVME_BE_LINUX_LIBISAL_ENABLED
 	"conf: XNVME_BE_LINUX_LIBISAL_ENABLED",
 #endif
+#ifdef XNVME_BE_BAM_ENABLED
+	"conf: XNVME_BE_BAM_ENABLED",
+#endif
 #ifdef XNVME_BE_SPDK_ENABLED
 	"conf: XNVME_BE_SPDK_ENABLED",
 #endif

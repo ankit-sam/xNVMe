@@ -1,0 +1,1 @@
+xnvmelib_source += files('skiplist.cu')

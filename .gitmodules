@@ -1,0 +1,3 @@
+[submodule "toolbox/third-party/freestanding"]
+	path = toolbox/third-party/freestanding
+	url = https://github.com/ogiroux/freestanding.git

@@ -5,10 +5,12 @@
 project(
   'xnvme',
   'c',
+  'cuda',
   version: '0.7.5',
   license: 'BSD-3-Clause',
   default_options: [
     'c_std=gnu11',
+    'cuda_std=c++11',
     'warning_level=2',
     'buildtype=release',
     'default_library=both',
@@ -45,6 +47,20 @@ add_project_arguments(
   language: 'c'
 )
 
+nvcc = meson.get_compiler('cuda')
+nvcc_flags = [
+  '-lineinfo',
+  '-D__CUDA__',
+  '-D__CUDACC__',
+  '-gencode', 'arch=compute_70,code=sm_70',
+  '-gencode', 'arch=compute_80,code=sm_80',
+  '-gencode', 'arch=compute_90,code=sm_90',
+]
+
+add_project_arguments(
+  nvcc_flags,
+  language: 'cuda'
+)
 add_project_arguments('-Db_lto='+ (not is_windows).to_string(), language: 'c')
 add_project_arguments('-Db_pie='+ get_option('hardening').to_string(), language: 'c')
 
@@ -130,6 +146,19 @@ isal_dep = dependency(
 )
 conf_data.set('XNVME_BE_LINUX_LIBISAL_ENABLED', isal_dep.found())
 
+libnvm_dep = cc.find_library(
+  'nvm',
+  has_headers: ['nvm_admin.h', 'nvm_aq.h', 'nvm_cmd.h', 'nvm_ctrl.h', 'nvm_dma.h', 'nvm_error.h', 'nvm_parallel_queue.h', 'nvm_queue.h', 'nvm_types.h', 'nvm_util.h'],
+  required: get_option('with-bam'),
+)
+
+cuda_dep = dependency(
+  'cuda',
+  required: get_option('with-bam'),
+)
+
+conf_data.set('XNVME_BE_BAM_ENABLED', libnvm_dep.found() and cuda_dep.found())
+
 if (is_linux or is_freebsd)
   spdk_proj = subproject('spdk', required: get_option('with-spdk'))
   spdk_dep = spdk_proj.found() ? spdk_proj.get_variable('spdk_dep') : dependency('', required: false)
@@ -172,6 +201,11 @@ endif
 if is_darwin
   conf_inc += [ include_directories('toolbox' / 'third-party' / 'macos') ]
 endif
+if libnvm_dep.found()
+ conf_inc += [ include_directories('toolbox' / 'third-party' / 'freestanding' / 'include')]
+ conf_inc += [ include_directories('toolbox' / 'third-party' / 'ccan')]
+ conf_inc += [ include_directories('toolbox' / 'third-party' / 'skiplist')]
+endif
 
 rpm_conf = configuration_data()
 rpm_conf.set('NAME',    meson.project_name())
@@ -185,6 +219,7 @@ configure_file(
 
 # Provide configuration via header-file 'xnvme_config.h'
 add_project_arguments(['-include', 'xnvme_config.h'], language: 'c')
+add_project_arguments(['-include', 'xnvme_config.h'], language: 'cuda')
 
 # bash-completions: run the Makefile target 'make gen-bash-completions' to update the completions
 bash_completion_dep = dependency(
@@ -211,6 +246,8 @@ elif get_option('force_completions') and not is_windows
 else
   install_completions = false
 endif
+
+xnvmelib_source = []
 
 # Scripts
 subdir('toolbox')

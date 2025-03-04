@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-xnvmelib_source = [
+xnvmelib_source += files(
   'xnvme_adm.c',
   'xnvme_be.c',
   'xnvme_be_cbi_admin_shim.c',
@@ -81,7 +81,7 @@ xnvmelib_source = [
   'xnvme_znd.c',
   'xnvme_crc.c',
   'xnvme_pi.c',
-]
+)
 
 xnvmelib_deps = [
   setupapi_dep,

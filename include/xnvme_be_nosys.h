@@ -89,8 +89,8 @@ xnvme_be_nosys_dev_close(struct xnvme_dev *dev);
 
 #define XNVME_BE_NOSYS_SYNC                             \
 	{                                               \
-		.cmd_iov = xnvme_be_nosys_sync_cmd_iov, \
 		.cmd_io  = xnvme_be_nosys_sync_cmd_io,  \
+		.cmd_iov = xnvme_be_nosys_sync_cmd_iov, \
 		.id      = "ENOSYS",                    \
 	}
 
