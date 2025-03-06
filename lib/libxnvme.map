@@ -35,6 +35,7 @@
 		xnvme_buf_virt_free;
 		xnvme_buf_fill;
 		xnvme_buf_clear;
+		xnvme_buf_copy;
 		xnvme_buf_diff;
 		xnvme_buf_diff_pr;
 		xnvme_buf_to_file;

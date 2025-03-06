@@ -139,12 +139,11 @@ _dev_idfy_csi(struct xnvme_dev *dev, struct xnvme_spec_idfy *idfy_ns,
 {
 	struct xnvme_cmd_ctx ctx;
 	int err;
-
 	// Attempt to identify ZONED
 
 	struct xnvme_spec_znd_idfy_ns *zns = (void *)idfy_ns;
 
-	memset(idfy_ctrlr, 0, sizeof(*idfy_ctrlr));
+	xnvme_buf_clear(idfy_ctrlr, sizeof(*idfy_ctrlr));
 	ctx = xnvme_cmd_ctx_from_dev(dev);
 	err = xnvme_adm_idfy_ctrlr_csi(&ctx, XNVME_SPEC_CSI_ZONED, idfy_ctrlr);
 	if (err || xnvme_cmd_ctx_cpl_status(&ctx)) {
@@ -152,7 +151,7 @@ _dev_idfy_csi(struct xnvme_dev *dev, struct xnvme_spec_idfy *idfy_ns,
 		goto not_zns;
 	}
 
-	memset(idfy_ns, 0, sizeof(*idfy_ns));
+	xnvme_buf_clear(idfy_ns, sizeof(*idfy_ns));
 	ctx = xnvme_cmd_ctx_from_dev(dev);
 	err = xnvme_adm_idfy_ns_csi(&ctx, dev->ident.nsid, XNVME_SPEC_CSI_ZONED, idfy_ns);
 	if (err || xnvme_cmd_ctx_cpl_status(&ctx)) {
@@ -164,8 +163,9 @@ _dev_idfy_csi(struct xnvme_dev *dev, struct xnvme_spec_idfy *idfy_ns,
 		goto not_zns;
 	}
 
-	memcpy(&dev->idcss.ctrlr, idfy_ctrlr, sizeof(*idfy_ctrlr));
-	memcpy(&dev->idcss.ns, idfy_ns, sizeof(*idfy_ns));
+	xnvme_buf_copy(&dev->idcss.ctrlr, idfy_ctrlr, sizeof(*idfy_ctrlr));
+	xnvme_buf_copy(&dev->idcss.ns, idfy_ns, sizeof(*idfy_ns));
+
 	dev->ident.csi = XNVME_SPEC_CSI_ZONED;
 
 	XNVME_DEBUG("INFO: looks like csi(ZNS)");
@@ -179,7 +179,7 @@ not_zns:
 	struct xnvme_spec_fs_idfy_ctrlr *fs_ctrlr = (void *)idfy_ctrlr;
 	struct xnvme_spec_fs_idfy_ns *fs_ns = (void *)idfy_ns;
 
-	memset(idfy_ctrlr, 0, sizeof(*idfy_ctrlr));
+	xnvme_buf_clear(idfy_ctrlr, sizeof(*idfy_ctrlr));
 	ctx = xnvme_cmd_ctx_from_dev(dev);
 	err = xnvme_adm_idfy_ctrlr_csi(&ctx, XNVME_SPEC_CSI_FS, idfy_ctrlr);
 	if (err || xnvme_cmd_ctx_cpl_status(&ctx)) {
@@ -191,7 +191,7 @@ not_zns:
 		goto not_fs;
 	}
 
-	memset(idfy_ns, 0, sizeof(*idfy_ns));
+	xnvme_buf_clear(idfy_ns, sizeof(*idfy_ns));
 	ctx = xnvme_cmd_ctx_from_dev(dev);
 	err = xnvme_adm_idfy_ns_csi(&ctx, dev->ident.nsid, XNVME_SPEC_CSI_FS, idfy_ns);
 	if (err || xnvme_cmd_ctx_cpl_status(&ctx)) {
@@ -203,8 +203,8 @@ not_zns:
 		goto not_fs;
 	}
 
-	memcpy(&dev->idcss.ctrlr, idfy_ctrlr, sizeof(*idfy_ctrlr));
-	memcpy(&dev->idcss.ns, idfy_ns, sizeof(*idfy_ns));
+	xnvme_buf_copy(&dev->idcss.ctrlr, idfy_ctrlr, sizeof(*idfy_ctrlr));
+	xnvme_buf_copy(&dev->idcss.ns, idfy_ns, sizeof(*idfy_ns));
 
 	XNVME_DEBUG("INFO: looks like csi(FS)");
 	dev->ident.csi = XNVME_SPEC_CSI_FS;
@@ -215,7 +215,7 @@ not_fs:
 
 	// Attempt to identify NVM
 
-	memset(idfy_ctrlr, 0, sizeof(*idfy_ctrlr));
+	xnvme_buf_clear(idfy_ctrlr, sizeof(*idfy_ctrlr));
 	ctx = xnvme_cmd_ctx_from_dev(dev);
 	err = xnvme_adm_idfy_ctrlr_csi(&ctx, XNVME_SPEC_CSI_NVM, idfy_ctrlr);
 	if (err || xnvme_cmd_ctx_cpl_status(&ctx)) {
@@ -223,15 +223,15 @@ not_fs:
 		goto not_nvm;
 	}
 
-	memset(idfy_ns, 0, sizeof(*idfy_ns));
+	xnvme_buf_clear(idfy_ns, sizeof(*idfy_ns));
 	ctx = xnvme_cmd_ctx_from_dev(dev);
 	err = xnvme_adm_idfy_ns_csi(&ctx, dev->ident.nsid, XNVME_SPEC_CSI_NVM, idfy_ns);
 	if (err || xnvme_cmd_ctx_cpl_status(&ctx)) {
 		XNVME_DEBUG("INFO: !xnvme_adm_idfy_ns_csi(CSI_NVM)");
 		goto not_nvm;
 	}
-	memcpy(&dev->idcss.ctrlr, idfy_ctrlr, sizeof(*idfy_ctrlr));
-	memcpy(&dev->idcss.ns, idfy_ns, sizeof(*idfy_ns));
+	xnvme_buf_copy(&dev->idcss.ctrlr, idfy_ctrlr, sizeof(*idfy_ctrlr));
+	xnvme_buf_copy(&dev->idcss.ns, idfy_ns, sizeof(*idfy_ns));
 
 	XNVME_DEBUG("INFO: looks like csi(NVM)");
 	dev->ident.csi = XNVME_SPEC_CSI_NVM;
@@ -270,7 +270,7 @@ _dev_idfy(struct xnvme_dev *dev)
 	}
 
 	// Retrieve idfy-ctrlr
-	memset(idfy_ctrlr, 0, sizeof(*idfy_ctrlr));
+	xnvme_buf_clear(idfy_ctrlr, sizeof(*idfy_ctrlr));
 	ctx = xnvme_cmd_ctx_from_dev(dev);
 	err = xnvme_adm_idfy_ctrlr(&ctx, idfy_ctrlr);
 	if (err || xnvme_cmd_ctx_cpl_status(&ctx)) {
@@ -279,16 +279,17 @@ _dev_idfy(struct xnvme_dev *dev)
 		goto exit;
 	}
 	// Store idfy-ctrlr in device instance
-	memcpy(&dev->id.ctrlr, idfy_ctrlr, sizeof(*idfy_ctrlr));
+	xnvme_buf_copy(&dev->id.ctrlr, idfy_ctrlr, sizeof(*idfy_ctrlr));
+
 	// Store subnqn in device-identifier
-	memcpy(dev->ident.subnqn, idfy_ctrlr->ctrlr.subnqn, sizeof(dev->ident.subnqn));
+	xnvme_buf_copy(dev->ident.subnqn, dev->id.ctrlr.subnqn, sizeof(dev->ident.subnqn));
 
 	if (dev->ident.dtype == XNVME_DEV_TYPE_NVME_CONTROLLER) {
 		goto exit;
 	}
 
 	// Retrieve idfy-ns
-	memset(idfy_ns, 0, sizeof(*idfy_ns));
+	xnvme_buf_clear(idfy_ns, sizeof(*idfy_ns));
 	ctx = xnvme_cmd_ctx_from_dev(dev);
 	err = xnvme_adm_idfy_ns(&ctx, dev->ident.nsid, idfy_ns);
 	if (err || xnvme_cmd_ctx_cpl_status(&ctx)) {
@@ -297,7 +298,7 @@ _dev_idfy(struct xnvme_dev *dev)
 		goto exit;
 	}
 	// Store idfy-ns in device instance
-	memcpy(&dev->id.ns, idfy_ns, sizeof(*idfy_ns));
+	xnvme_buf_copy(&dev->id.ns, idfy_ns, sizeof(*idfy_ns));
 
 	err = _dev_idfy_csi(dev, idfy_ns, idfy_ctrlr);
 	if (err) {

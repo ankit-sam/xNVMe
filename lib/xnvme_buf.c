@@ -8,6 +8,7 @@
 #include <libxnvme.h>
 #include <xnvme_dev.h>
 #include <xnvme_be.h>
+#include <cuda_runtime.h>
 
 void *
 xnvme_buf_virt_alloc(size_t alignment, size_t nbytes)
@@ -90,9 +91,73 @@ xnvme_buf_free(const struct xnvme_dev *dev, void *buf)
 void *
 xnvme_buf_clear(void *buf, size_t nbytes)
 {
+	struct cudaPointerAttributes attr;
+	cudaError_t err;
+
+	err = cudaPointerGetAttributes(&attr, buf);
+	if (err != cudaSuccess) {
+		XNVME_DEBUG("FAILED: cudaPointerGetAttributes, err: %s", cudaGetErrorString(err))
+		return NULL;
+	}
+	if (attr.type == cudaMemoryTypeDevice) {
+		err = cudaMemset(buf, 0, sizeof(nbytes));
+		if (err != cudaSuccess) {
+			XNVME_DEBUG("FAILED: cudaMemset, err: %s", cudaGetErrorString(err))
+			return NULL;
+		}
+		return buf;
+	}
+
 	return memset(buf, 0, nbytes);
 }
 
+void *
+xnvme_buf_copy(void *dst, void *src, size_t nbytes)
+{
+	struct cudaPointerAttributes src_attr;
+	struct cudaPointerAttributes dst_attr;
+	enum cudaMemcpyKind kind;
+	cudaError_t err;
+
+	err = cudaPointerGetAttributes(&src_attr, src);
+	if (err != cudaSuccess) {
+		XNVME_DEBUG("FAILED: cudaPointerGetAttributes, err: %s", cudaGetErrorString(err))
+		return NULL;
+	}
+
+	err = cudaPointerGetAttributes(&dst_attr, dst);
+	if (err != cudaSuccess) {
+		XNVME_DEBUG("FAILED: cudaPointerGetAttributes, err: %s", cudaGetErrorString(err))
+		return NULL;
+	}
+
+	if (src_attr.type == cudaMemoryTypeDevice) {
+		switch (dst_attr.type) {
+		case cudaMemoryTypeDevice:
+			kind = cudaMemcpyDeviceToDevice;
+			break;
+		default:
+			kind = cudaMemcpyDeviceToHost;
+			break;
+		}
+	} else {
+		switch (dst_attr.type) {
+		case cudaMemoryTypeDevice:
+			kind = cudaMemcpyHostToDevice;
+			break;
+		default:
+			kind = cudaMemcpyHostToHost;
+			break;
+		}
+	}
+
+	err = cudaMemcpy(dst, src, nbytes, kind);
+	if (err != cudaSuccess) {
+		XNVME_DEBUG("FAILED: cudaMemcpy, err: %s", cudaGetErrorString(err))
+		return NULL;
+	}
+	return dst;
+}
 /**
  * Helper function writing/reading given buf to/from file. When mode has
  * O_WRONLY, the given buffer is written to file, otherwise, it is read.
@@ -174,14 +239,29 @@ xnvme_buf_to_file(void *buf, size_t nbytes, const char *path)
 int
 xnvme_buf_fill(void *buf, size_t nbytes, const char *content)
 {
-	uint8_t *cbuf = buf;
+	struct cudaPointerAttributes attr;
+	cudaError_t cudaErr;
+	uint8_t *cbuf;
+
+	cudaErr = cudaPointerGetAttributes(&attr, buf);
+	if (cudaErr != cudaSuccess) {
+		XNVME_DEBUG("FAILED: cudaPointerGetAttributes, err: %s",
+			    cudaGetErrorString(cudaErr))
+		return -cudaErr;
+	}
+
+	if (attr.type == cudaMemoryTypeDevice) {
+		cbuf = malloc(nbytes);
+	} else {
+		cbuf = buf;
+	}
 
 	if (!strncmp(content, "anum", 4)) {
 		for (size_t i = 0; i < nbytes; ++i) {
 			cbuf[i] = (i % 26) + 65;
 		}
 
-		return 0;
+		goto memcpy;
 	}
 
 	if (!strncmp(content, "rand-t", 6)) {
@@ -190,7 +270,7 @@ xnvme_buf_fill(void *buf, size_t nbytes, const char *content)
 			cbuf[i] = (rand() % 26) + 65;
 		}
 
-		return 0;
+		goto memcpy;
 	}
 
 	if (!strncmp(content, "rand-k", 6)) {
@@ -199,7 +279,7 @@ xnvme_buf_fill(void *buf, size_t nbytes, const char *content)
 			cbuf[i] = (rand() % 26) + 65;
 		}
 
-		return 0;
+		goto memcpy;
 	}
 
 	if (!strncmp(content, "ascii", 5)) {
@@ -207,24 +287,79 @@ xnvme_buf_fill(void *buf, size_t nbytes, const char *content)
 			cbuf[i] = (i % 26) + 65;
 		}
 
-		return 0;
+		goto memcpy;
 	}
 
 	if (!strncmp(content, "zero", 4)) {
-		xnvme_buf_clear(buf, nbytes);
+		memset(cbuf, 0, nbytes);
+		goto memcpy;
+	}
 
-		return 0;
+	if (attr.type == cudaMemoryTypeDevice) {
+		free(cbuf);
 	}
 
 	return xnvme_buf_from_file(buf, nbytes, content);
+
+memcpy:
+	if (attr.type == cudaMemoryTypeDevice) {
+		cudaErr = cudaMemcpy(buf, cbuf, nbytes, cudaMemcpyHostToDevice);
+		if (cudaErr != cudaSuccess) {
+			XNVME_DEBUG("FAILED: cudaMemcpy, err: %s", cudaGetErrorString(cudaErr))
+			return cudaErr;
+		}
+		free(cbuf);
+	}
+
+	return 0;
 }
 
 size_t
 xnvme_buf_diff(const void *expected, const void *actual, size_t nbytes)
 {
-	const uint8_t *exp = expected;
-	const uint8_t *act = actual;
+	struct cudaPointerAttributes exp_attr;
+	struct cudaPointerAttributes act_attr;
+	const uint8_t *exp;
+	const uint8_t *act;
+	cudaError_t cudaErr;
 	size_t diff = 0;
+
+	cudaErr = cudaPointerGetAttributes(&exp_attr, expected);
+	if (cudaErr != cudaSuccess) {
+		XNVME_DEBUG("FAILED: cudaPointerGetAttributes, err: %s",
+			    cudaGetErrorString(cudaErr))
+		return -cudaErr;
+	}
+
+	cudaErr = cudaPointerGetAttributes(&act_attr, expected);
+	if (cudaErr != cudaSuccess) {
+		XNVME_DEBUG("FAILED: cudaPointerGetAttributes, err: %s",
+			    cudaGetErrorString(cudaErr))
+		return -cudaErr;
+	}
+	if (exp_attr.type != act_attr.type) {
+		XNVME_DEBUG("FAILED: memory type for expected and actual doesn't match");
+		return -EINVAL;
+	}
+
+	if (exp_attr.type == cudaMemoryTypeDevice) {
+		exp = malloc(nbytes);
+		act = malloc(nbytes);
+		cudaErr = cudaMemcpy((void *)exp, expected, nbytes, cudaMemcpyDeviceToHost);
+		if (cudaErr != cudaSuccess) {
+			XNVME_DEBUG("FAILED: cudaMemcpy, err: %s", cudaGetErrorString(cudaErr))
+			return -cudaErr;
+		}
+
+		cudaErr = cudaMemcpy((void *)act, actual, nbytes, cudaMemcpyDeviceToHost);
+		if (cudaErr != cudaSuccess) {
+			XNVME_DEBUG("FAILED: cudaMemcpy, err: %s", cudaGetErrorString(cudaErr))
+			return -cudaErr;
+		}
+	} else {
+		exp = expected;
+		act = actual;
+	}
 
 	for (size_t i = 0; i < nbytes; ++i) {
 		if (exp[i] == act[i]) {
@@ -232,6 +367,11 @@ xnvme_buf_diff(const void *expected, const void *actual, size_t nbytes)
 		}
 
 		++diff;
+	}
+
+	if (exp_attr.type == cudaMemoryTypeDevice) {
+		free((void *)exp);
+		free((void *)act);
 	}
 
 	return diff;

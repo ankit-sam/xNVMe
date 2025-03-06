@@ -157,6 +157,9 @@ xnvme_buf_fill(void *buf, size_t nbytes, const char *content);
 void *
 xnvme_buf_clear(void *buf, size_t nbytes);
 
+void *
+xnvme_buf_copy(void *dst, void *src, size_t nbytes);
+
 /**
  * Returns the number of bytes where expected is different from actual
  *

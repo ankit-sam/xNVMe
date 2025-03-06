@@ -284,7 +284,7 @@ iowork_from_cli(struct xnvme_cli *cli, struct iowork *work)
 {
 	int err;
 
-	xnvme_buf_fill(work, sizeof(*work), "zero");
+	memset(work, 0, sizeof(*work));
 
 	work->dev = cli->args.dev;
 	work->nsid = xnvme_dev_get_nsid(work->dev);
