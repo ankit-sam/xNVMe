@@ -14,5 +14,6 @@ extern struct xnvme_be xnvme_be_ramdisk;
 extern struct xnvme_be xnvme_be_windows;
 extern struct xnvme_be xnvme_be_vfio;
 extern struct xnvme_be xnvme_be_bam;
+extern struct xnvme_be xnvme_be_gds;
 
 #endif /* __INTERNAL_XNVME_BE_REGISTRY_H */
