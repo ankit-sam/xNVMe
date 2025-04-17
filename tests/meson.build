@@ -35,6 +35,7 @@ tests = {
     ['open', ['open', '--count', '4']],
     ['multi', ['multi', '--count', '4']],
   ],
+  'gpu_ioworker.cu': [],
   'ioworker.c': [
     ['verify', ['verify', '1GB']],
     ['verify_sync', ['verify-sync', '1GB']],
@@ -76,7 +77,7 @@ foreach test_source, tests_args : tests
     test_source,
     include_directories: [conf_inc, xnvme_inc],
     link_with: xnvmelib,
-    link_args: link_args_hardening,
+    link_args: link_args_hardening + cuda_archs,
     install_rpath: xnvmelib_rpath,
     install: true,
   )
