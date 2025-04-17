@@ -47,15 +47,20 @@ add_project_arguments(
   language: 'c'
 )
 
-nvcc = meson.get_compiler('cuda')
-nvcc_flags = [
-  '-lineinfo',
-  '-D__CUDA__',
-  '-D__CUDACC__',
+cuda_archs = [
   '-gencode', 'arch=compute_70,code=sm_70',
   '-gencode', 'arch=compute_80,code=sm_80',
   '-gencode', 'arch=compute_90,code=sm_90',
 ]
+
+nvcc = meson.get_compiler('cuda')
+nvcc_flags = [
+  '-D__CUDA__',
+  '-D__CUDACC__',
+  '-dc',
+]
+
+nvcc_flags += cuda_archs
 
 add_project_arguments(
   nvcc_flags,

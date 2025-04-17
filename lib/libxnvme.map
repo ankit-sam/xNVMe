@@ -118,6 +118,9 @@
 		xnvme_ident;
 		xnvme_ident_from_uri;
 
+		# libxnvme_kernels.h
+		xnvme_kernels_cmd_submit;
+
 		# libxnvme_kvs.h
 		xnvme_retreive_opts;
 		xnvme_store_opts;
