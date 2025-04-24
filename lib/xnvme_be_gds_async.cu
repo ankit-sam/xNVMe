@@ -31,7 +31,13 @@ xnvme_be_gds_queue_init(struct xnvme_queue *q, int XNVME_UNUSED(opts))
 	struct xnvme_be_gds_state *state = (struct xnvme_be_gds_state*)queue->base.dev->be.state;
 	void *cq_buf, *sq_buf;
 	int err, qid = ++state->qid;
-	int qd = queue->base.capacity;
+
+	// Whether the controller requires contiguous phys mem for queues
+	bool contiguous_queues = !!_RB(*_REG(state->ctrlr->mm_ptr, 0x0000, 64), 16, 16);
+
+	// NVMe queue capacity must be one larger than the requested capacity
+	// since only n-1 slots in an NVMe queue may be used
+	int qd = queue->base.capacity + 1;
 
 	err = posix_memalign(&cq_buf, 4096, qd*sizeof(nvm_cpl_t));
 	if (err) {
@@ -46,22 +52,37 @@ xnvme_be_gds_queue_init(struct xnvme_queue *q, int XNVME_UNUSED(opts))
 		return err;
 	}
 
-	err = nvm_admin_cq_create(state->aq, &state->cq[qid], qid, queue->cq_mem, 0, qd, false);
-	if (err) {
-		XNVME_DEBUG("FAILED: could not create I/O completion queue, err: %d", err);
-		return err;
+	if (contiguous_queues && !queue->cq_mem->contiguous) {
+		XNVME_DEBUG("FAILED: controller requires contiguous memory for queues, but CQ mem is not contiguous");
+		nvm_dma_unmap(queue->cq_mem);
+		return -ENOMEM;
 	}
 
 	err = posix_memalign(&sq_buf, 4096, qd*sizeof(nvm_cmd_t));
 	if (err) {
 		XNVME_DEBUG("FAILED: could not allocate memory, err: %d", err);
+		nvm_dma_unmap(queue->cq_mem);
 		return err;
 	}
 
 	err = nvm_dma_map_host(&queue->sq_mem, state->ctrlr, sq_buf, qd*sizeof(nvm_cmd_t));
 	if (err) {
 		XNVME_DEBUG("FAILED: could not dma map memory, err: %d", err);
+		nvm_dma_unmap(queue->cq_mem);
 		free(sq_buf);
+		return err;
+	}
+
+	if (contiguous_queues && !queue->sq_mem->contiguous) {
+		XNVME_DEBUG("FAILED: controller requires contiguous memory for queues, but SQ mem is not contiguous");
+		nvm_dma_unmap(queue->cq_mem);
+		nvm_dma_unmap(queue->sq_mem);
+		return -ENOMEM;
+	}
+
+	err = nvm_admin_cq_create(state->aq, &state->cq[qid], qid, queue->cq_mem, 0, qd, false);
+	if (err) {
+		XNVME_DEBUG("FAILED: could not create I/O completion queue, err: %d", err);
 		return err;
 	}
 
@@ -119,7 +140,6 @@ xnvme_be_gds_queue_poke(struct xnvme_queue *queue, uint32_t max)
 		if (!cpl) {
 			break;
 		}
-		nvm_sq_update(q->sq);
 
 		reaped++;
 
@@ -133,6 +153,7 @@ xnvme_be_gds_queue_poke(struct xnvme_queue *queue, uint32_t max)
 
 	if (reaped) {
 		nvm_cq_update(q->cq);
+		nvm_sq_update(q->sq);
 	}
 
 	return reaped;
@@ -149,8 +170,17 @@ xnvme_be_gds_async_cmd_io(struct xnvme_cmd_ctx *ctx, void *dbuf, size_t dbuf_nby
 	nvm_cmd_t *cmd;
 	uint64_t offset, remainder, prp1, prp2 = 0;
 
+	if (queue->base.outstanding == queue->base.capacity) {
+		XNVME_DEBUG("FAILED: queue is full");
+		return -EBUSY;
+	}
+
 	ctx->cmd.common.cid = cmd_id;
 	cmd = nvm_sq_enqueue(queue->sq);
+	if (!cmd) {
+		XNVME_DEBUG("FAILED: queue full, mismatch between xNVMe queue and libnvm queue");
+		return -EBUSY;
+	}
 	*cmd = *((nvm_cmd_t *)&ctx->cmd);
 
 	if (dbuf) {
