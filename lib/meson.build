@@ -128,7 +128,7 @@ xnvmelib = library(
   xnvmelib_source,
   version: meson.project_version(),
   dependencies: xnvmelib_deps,
-  link_args: link_args_hardening + version_script + cuda_archs,
+  link_args: link_args_hardening + version_script + cuda_archs + nvcc_link_flags,
   link_depends: mapfile,
   include_directories: [conf_inc, xnvme_inc],
   install_dir: xnvmelib_libdir,

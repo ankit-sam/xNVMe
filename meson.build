@@ -60,10 +60,15 @@ nvcc_flags = [
   '-dc',
 ]
 
+nvcc_link_flags = [
+  '-dlink',
+]
+
 nvcc_flags += cuda_archs
 
 add_project_arguments(
   nvcc_flags,
+  nvcc_link_flags,
   language: 'cuda'
 )
 add_project_arguments('-Db_lto='+ (not is_windows).to_string(), language: 'c')
