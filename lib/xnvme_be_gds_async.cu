@@ -198,12 +198,32 @@ xnvme_be_gds_async_cmd_io(struct xnvme_cmd_ctx *ctx, void *dbuf, size_t dbuf_nby
 	return 0;
 }
 
+int
+xnvme_be_gds_async_cmd_iov(struct xnvme_cmd_ctx *ctx, struct iovec *dvec, size_t dvec_cnt,
+			   size_t dbuf_nbytes, void *XNVME_UNUSED(mbuf),
+			   size_t XNVME_UNUSED(mbuf_nbytes))
+{
+	struct xnvme_queue_gds *queue = (struct xnvme_queue_gds *)ctx->async.queue;
+	void *buf = NULL;
+	void *spdk_buf = dvec->iov_base;
+	int rc;
+
+	if (dvec_cnt != 1) {
+		XNVME_DEBUG("FAILED: more than 1 vector required");
+		return -EINVAL;
+	}
+
+	rc = xnvme_be_gds_async_cmd_io(ctx, spdk_buf, dbuf_nbytes, NULL, 0);
+
+	return rc;
+}
+
 #endif
 
 struct xnvme_be_async g_xnvme_be_gds_async = {
 #ifdef XNVME_BE_BAM_ENABLED
 	.cmd_io = xnvme_be_gds_async_cmd_io,
-	.cmd_iov = xnvme_be_nosys_queue_cmd_iov,
+	.cmd_iov = xnvme_be_gds_async_cmd_iov,
 	.poke = xnvme_be_gds_queue_poke,
 	.wait = xnvme_be_nosys_queue_wait,
 	.init = xnvme_be_gds_queue_init,
