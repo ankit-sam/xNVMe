@@ -211,12 +211,65 @@ xnvme_be_gds_async_cmd_io(struct xnvme_cmd_ctx *ctx, void *dbuf, size_t dbuf_nby
 	return 0;
 }
 
+int
+xnvme_be_gds_async_cmd_iov(struct xnvme_cmd_ctx *ctx, struct iovec *dvec, size_t dvec_cnt,
+			   size_t dbuf_nbytes, void *XNVME_UNUSED(mbuf),
+			   size_t XNVME_UNUSED(mbuf_nbytes))
+{
+	struct xnvme_queue_gds *queue = (struct xnvme_queue_gds *)ctx->async.queue;
+	void *buf = NULL;
+	void *spdk_buf = dvec->iov_base;
+	struct xnvme_spec_cpl *cpl;
+	int rc;
+
+	if (dvec_cnt != 1) {
+		XNVME_DEBUG("FAILED: more than 1 vector required");
+		return -EINVAL;
+	}
+
+	buf = ctx->dev->be.mem.buf_alloc(ctx->dev, dbuf_nbytes, NULL);
+	if (buf && ctx->cmd.common.opcode == XNVME_SPEC_NVM_OPC_WRITE) {
+		XNVME_DEBUG("Copying :%u bytes from: %p to %p", dbuf_nbytes, spdk_buf, buf);
+		memcpy(buf, spdk_buf, dbuf_nbytes);
+	}
+
+	rc = xnvme_be_gds_async_cmd_io(ctx, buf, dbuf_nbytes, NULL, 0);
+	if (rc) {
+		XNVME_DEBUG("error: %d", rc);
+		return rc;
+	} else {
+		do {
+again:
+			cpl = (struct xnvme_spec_cpl *)nvm_cq_poll(queue->cq);
+			if (!cpl) {
+				usleep(1);
+				goto again;
+			}
+
+			if (cpl->status.sc || cpl->status.sct) {
+				XNVME_DEBUG("cid: %d, sc: %x, sct: %x", cpl->cid, cpl->status.sc, cpl->status.sct);
+				return -EINVAL;
+			}
+			if (buf && ctx->cmd.common.opcode == XNVME_SPEC_NVM_OPC_READ) {
+				XNVME_DEBUG("Copying :%u bytes from: %p to %p", dbuf_nbytes, buf, spdk_buf);
+				memcpy(spdk_buf, buf, dbuf_nbytes);
+			}
+
+			ctx->dev->be.async.poke(ctx->async.queue, 0);
+			break;
+		} while (1);
+	}
+
+	ctx->dev->be.mem.buf_free(ctx->dev, buf);
+	return 0;
+}
+
 #endif
 
 struct xnvme_be_async g_xnvme_be_gds_async = {
 #ifdef XNVME_BE_BAM_ENABLED
 	.cmd_io = xnvme_be_gds_async_cmd_io,
-	.cmd_iov = xnvme_be_nosys_queue_cmd_iov,
+	.cmd_iov = xnvme_be_gds_async_cmd_iov,
 	.poke = xnvme_be_gds_queue_poke,
 	.wait = xnvme_be_nosys_queue_wait,
 	.init = xnvme_be_gds_queue_init,
