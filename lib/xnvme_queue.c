@@ -46,7 +46,7 @@ xnvme_queue_init(struct xnvme_dev *dev, uint16_t capacity, int opts, struct xnvm
 		XNVME_DEBUG("FAILED: !dev");
 		return -EINVAL;
 	}
-	if (!(xnvme_is_pow2(capacity) && (capacity < 4096))) {
+	if (capacity >= 4096) {
 		XNVME_DEBUG("EINVAL: capacity: %u", capacity);
 		return -EINVAL;
 	}
