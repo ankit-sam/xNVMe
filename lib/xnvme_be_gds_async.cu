@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Samsung Electronics Co., Ltd
 //
 // SPDX-License-Identifier: BSD-3-Clause
-
 extern "C" {
 #include <xnvme_be.h>
 #include <xnvme_be_nosys.h>
@@ -13,19 +12,130 @@ extern "C" {
 
 struct xnvme_queue_gds {
 	struct xnvme_queue_base base;
+	uint8_t qid;
+	uint8_t host;
+
+	uint8_t rsvd1[6];
 
 	nvm_queue_t *sq;
 	nvm_queue_t *cq;
 	nvm_dma_t *cq_mem;
 	nvm_dma_t *sq_mem;
 
-	uint8_t _rsvd[200];
+	uint8_t _rsvd[192];
 };
 XNVME_STATIC_ASSERT(sizeof(struct xnvme_queue_gds) == XNVME_BE_QUEUE_STATE_NBYTES,
 		    "Incorrect size")
 
-int
-xnvme_be_gds_queue_init(struct xnvme_queue *q, int XNVME_UNUSED(opts))
+static int
+gds_device_queue_init(struct xnvme_queue *q)
+{
+	struct xnvme_queue_gds *queue = (struct xnvme_queue_gds *)q;
+	struct xnvme_be_gds_state *state = (struct xnvme_be_gds_state*)queue->base.dev->be.state;
+	void *cq_buf, *sq_buf;
+	void *cq_db, *sq_db;
+	int err, qid = ++state->qid;
+	nvm_queue_t *sq = &state->sq[qid], *cq = &state->cq[qid];
+	// NVMe queue capacity must be one larger than the requested capacity
+	// since only n-1 slots in an NVMe queue may be used
+	int qd = queue->base.capacity + 1;
+
+	XNVME_DEBUG("qid %u, qd %u", qid, qd);
+	// create CQ
+	err = cudaMalloc(&cq_buf, NVM_PAGE_ALIGN(qd*sizeof(nvm_cpl_t), 1 << 16)); //align to 64k
+	if (err) {
+		XNVME_DEBUG("FAILED: could not allocate memory, err: %d", err);
+		return err;
+	}
+
+	err = nvm_dma_map_device(&queue->cq_mem, state->ctrlr, cq_buf, qd*sizeof(nvm_cpl_t));
+	if (err) {
+		XNVME_DEBUG("FAILED: could not dma map memory, err: %d", err);
+		free(cq_buf);
+		return err;
+	}
+
+	err = nvm_admin_cq_create(state->aq, cq, qid, queue->cq_mem, 0, qd, false);
+	if (err) {
+		XNVME_DEBUG("FAILED: could not create I/O completion queue, err: %d", err);
+		return err;
+	}
+
+	err = cudaHostGetDevicePointer(&cq_db, (void *)cq->db, 0);
+	if (err) {
+		XNVME_DEBUG("FAILED: could not get device pointer, err: %d", err);
+		return err;
+	}
+	cq->db = (volatile uint32_t *) cq_db;
+
+	err = cudaMalloc(&cq->head_mark, qd * sizeof(padded_struct));
+	if (err) {
+		XNVME_DEBUG("FAILED: could not allocate memory, err: %d", err);
+		return err;
+	}
+	err = cudaMalloc(&cq->pos_locks, qd * sizeof(padded_struct));
+	if (err) {
+		XNVME_DEBUG("FAILED: could not allocate memory, err: %d", err);
+		return err;
+	}
+	cq->qs_minus_1 = qd - 1;
+	cq->qs_log2 = (uint32_t) XNVME_ILOG2(qd);
+
+	// create SQ
+	err = cudaMalloc(&sq_buf, NVM_PAGE_ALIGN(qd*sizeof(nvm_cmd_t), 1 << 16)); //align to 64k
+	if (err) {
+		XNVME_DEBUG("FAILED: could not allocate memory, err: %d", err);
+		return err;
+	}
+
+	err = nvm_dma_map_device(&queue->sq_mem, state->ctrlr, sq_buf, qd*sizeof(nvm_cmd_t));
+	if (err) {
+		XNVME_DEBUG("FAILED: could not dma map memory, err: %d", err);
+		free(sq_buf);
+		return err;
+	}
+
+	err = nvm_admin_sq_create(state->aq, sq, cq, qid, queue->sq_mem, 0, qd, false);
+	if (err) {
+		XNVME_DEBUG("FAILED: could not create I/O submission queue, err: %d", err);
+		return err;
+	}
+
+	err = cudaHostGetDevicePointer(&sq_db, (void *)sq->db, 0);
+	if (err) {
+		XNVME_DEBUG("FAILED: could not get device pointer, err: %d", err);
+		return err;
+	}
+	sq->db = (volatile uint32_t *) sq_db;
+
+	err = cudaMalloc(&sq->cid, (1<<16) * sizeof(padded_struct));
+	if (err) {
+		XNVME_DEBUG("FAILED: could not allocate memory, err: %d", err);
+		return err;
+	}
+	err = cudaMalloc(&sq->tickets, qd * sizeof(padded_struct));
+	if (err) {
+		XNVME_DEBUG("FAILED: could not allocate memory, err: %d", err);
+		return err;
+	}
+	err = cudaMalloc(&sq->tail_mark, qd * sizeof(padded_struct));
+	if (err) {
+		XNVME_DEBUG("FAILED: could not allocate memory, err: %d", err);
+		return err;
+	}
+	sq->qs_minus_1 = qd - 1;
+	sq->qs_log2 = (uint32_t) XNVME_ILOG2(qd);
+
+	queue->host = 0;
+	queue->qid = qid;
+	queue->cq = cq;
+	queue->sq = sq;
+
+	return 0;
+}
+
+static int
+gds_host_queue_init(struct xnvme_queue *q)
 {
 	struct xnvme_queue_gds *queue = (struct xnvme_queue_gds *)q;
 	struct xnvme_be_gds_state *state = (struct xnvme_be_gds_state*)queue->base.dev->be.state;
@@ -92,6 +202,8 @@ xnvme_be_gds_queue_init(struct xnvme_queue *q, int XNVME_UNUSED(opts))
 		return err;
 	}
 
+	queue->host = 1;
+	queue->qid = qid;
 	queue->cq = &state->cq[qid];
 	queue->sq = &state->sq[qid];
 
@@ -99,7 +211,23 @@ xnvme_be_gds_queue_init(struct xnvme_queue *q, int XNVME_UNUSED(opts))
 }
 
 int
-xnvme_be_gds_queue_term(struct xnvme_queue *q)
+xnvme_be_gds_queue_init(struct xnvme_queue *q, int opts)
+{
+	int err;
+
+	if (opts) {
+		err = gds_device_queue_init(q);
+		XNVME_DEBUG("Allocated qpair in device (GPU) memory");
+	} else {
+		err = gds_host_queue_init(q);
+		XNVME_DEBUG("Allocated qpair in host memory");
+	}
+
+	return err;
+}
+
+int
+gds_host_queue_term(struct xnvme_queue *q)
 {
 	struct xnvme_queue_gds *queue = (struct xnvme_queue_gds *)q;
 	struct xnvme_be_gds_state *state = (struct xnvme_be_gds_state*)queue->base.dev->be.state;
@@ -119,7 +247,58 @@ xnvme_be_gds_queue_term(struct xnvme_queue *q)
 
 	nvm_dma_unmap(queue->cq_mem);
 	nvm_dma_unmap(queue->sq_mem);
+
 	return 0;
+}
+
+int
+gds_device_queue_term(struct xnvme_queue *q)
+{
+	struct xnvme_queue_gds *queue = (struct xnvme_queue_gds *)q;
+	struct xnvme_be_gds_state *state = (struct xnvme_be_gds_state*)queue->base.dev->be.state;
+	nvm_queue_t *sq = queue->sq, *cq = queue->cq;
+	int err;
+
+	cudaFree(sq->cid);
+	cudaFree(sq->tickets);
+	cudaFree(sq->tail_mark);
+
+	cudaFree(cq->pos_locks);
+	cudaFree(cq->head_mark);
+
+	err = nvm_admin_sq_delete(state->aq, sq, cq);
+	if (err) {
+		XNVME_DEBUG("FAILED: could not delete I/O submission queue, err: %d", err);
+		return err;
+	}
+
+	err = nvm_admin_cq_delete(state->aq, cq);
+	if (err) {
+		XNVME_DEBUG("FAILED: could not delete I/O completion queue, err: %d", err);
+		return err;
+	}
+
+	nvm_dma_unmap(queue->cq_mem);
+	nvm_dma_unmap(queue->sq_mem);
+
+	return 0;
+}
+
+int
+xnvme_be_gds_queue_term(struct xnvme_queue *q)
+{
+	struct xnvme_queue_gds *queue = (struct xnvme_queue_gds *)q;
+	int err;
+
+	if (queue->host) {
+		err = gds_host_queue_term(q);
+		XNVME_DEBUG("Freed qpair from host memory");
+	} else {
+		err = gds_device_queue_term(q);
+		XNVME_DEBUG("Freed qpair from device (GPU) memory");
+	}
+
+	return err;
 }
 
 int
