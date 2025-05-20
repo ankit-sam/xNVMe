@@ -11,6 +11,8 @@ extern "C" {
 #include <xnvme_dev.h>
 #include <xnvme_be_bam.h>
 
+int g_shmid_shared;
+
 int
 xnvme_be_bam_queue_term(struct xnvme_be_bam_state *state, int qid)
 {
@@ -149,6 +151,7 @@ xnvme_be_bam_dev_open(struct xnvme_dev *dev)
 	nvm_dma_t *aq_mem;
 	void *buf;
 	int fd, err;
+	struct local_admin *admin;
 	uint16_t n_qps;
 	uint16_t n_sqs = XNVME_BE_BAM_NQUEUES_MAX, n_cqs = XNVME_BE_BAM_NQUEUES_MAX;
 
@@ -179,11 +182,21 @@ xnvme_be_bam_dev_open(struct xnvme_dev *dev)
 	}
 	skiplist_init(state->list);
 
-	err = posix_memalign(&buf, 4096, state->ctrlr->page_size * 3);
-	if (err) {
-		XNVME_DEBUG("FAILED: could not allocate memory, err: %d", err);
+	g_shmid_shared = shmget(SHM_KEY, state->ctrlr->page_size * 3 + sizeof(struct local_admin), IPC_CREAT | 0666);
+	if (g_shmid_shared < 0) {
+		XNVME_DEBUG("FAILED: could not get shmid for shmd, err: %d", g_shmid_shared);
 		return err;
 	}
+
+	XNVME_DEBUG("Got shared memory segment with shmid: %d", g_shmid_shared);
+	buf = shmat(g_shmid_shared, NULL, 0);
+	if (buf == NULL || buf == (void *) -1) {
+		XNVME_DEBUG("FAILED: could not attach to shared memory segment, for shmid: %d", g_shmid_shared);
+		return err;
+	}
+	XNVME_DEBUG("Attached to shared memory segment with shmid: %d, at %p", g_shmid_shared, buf);
+
+	state->buf = buf;
 
 	err = nvm_dma_map_host(&aq_mem, state->ctrlr, buf, state->ctrlr->page_size * 3);
 	if (err) {
@@ -192,22 +205,40 @@ xnvme_be_bam_dev_open(struct xnvme_dev *dev)
 		return err;
 	}
 
-	err = nvm_aq_create(&state->aq, state->ctrlr, aq_mem);
+	admin = (struct local_admin *)((uint8_t *)buf + state->ctrlr->page_size * 3);
+
+	XNVME_DEBUG("page size: %u, admin: %p", state->ctrlr->page_size, admin);
+
+	if (admin->qmem != NULL) {
+		pthread_mutex_init(&admin->mutex, NULL);
+		pthread_mutex_lock(&admin->mutex);
+
+		err = nvm_aq_share(&state->aq, state->ctrlr, aq_mem, admin);
+		state->primary = 0;
+	} else {
+		pthread_mutex_lock(&admin->mutex);
+		err = nvm_aq_create_new(&state->aq, state->ctrlr, aq_mem, admin);
+		state->primary = 1;
+	}
+
 	nvm_dma_unmap(aq_mem);
 	if (err) {
-		XNVME_DEBUG("FAILED: could not create admin queues, err: %d", err);
+		XNVME_DEBUG("FAILED: could not create/share admin queues, err: %d", err);
+		pthread_mutex_unlock(&admin->mutex);
 		return err;
 	}
 
 	err = cudaHostRegister((void*) state->ctrlr->mm_ptr, NVM_CTRL_MEM_MINSIZE, cudaHostRegisterIoMemory);
 	if (err) {
 		XNVME_DEBUG("FAILED: could not map IO memory, err: %d", err);
+		pthread_mutex_unlock(&admin->mutex);
 		return err;
 	}
 
 	err = nvm_admin_request_num_queues(state->aq, &n_sqs, &n_cqs);
 	if (err) {
 		XNVME_DEBUG("FAILED: could not reserve I/O queues, err: %d", err);
+		pthread_mutex_unlock(&admin->mutex);
 		return err;
 	}
 
@@ -215,12 +246,14 @@ xnvme_be_bam_dev_open(struct xnvme_dev *dev)
 	err = cudaMallocManaged(&state->sq, NVM_PAGE_ALIGN(sizeof(nvm_queue_t) * n_qps, 1 << 16));
 	if (err) {
 		XNVME_DEBUG("FAILED: could not allocate memory for SQ, err: %d", err);
+		pthread_mutex_unlock(&admin->mutex);
 		return err;
 	}
 
 	err = cudaMallocManaged(&state->cq, NVM_PAGE_ALIGN(sizeof(nvm_queue_t) * n_qps, 1 << 16));
 	if (err) {
 		XNVME_DEBUG("FAILED: could not allocate memory for CQ, err: %d", err);
+		pthread_mutex_unlock(&admin->mutex);
 		return err;
 	}
 
@@ -228,6 +261,7 @@ xnvme_be_bam_dev_open(struct xnvme_dev *dev)
 	if (!state->sq_mem) {
 		err = errno;
 		XNVME_DEBUG("FAILED: could not allocate memory for SQMEM, err: %d", err);
+		pthread_mutex_unlock(&admin->mutex);
 		return err;
 	}
 
@@ -235,13 +269,16 @@ xnvme_be_bam_dev_open(struct xnvme_dev *dev)
 	if (!state->cq_mem) {
 		err = errno;
 		XNVME_DEBUG("FAILED: could not allocate memory for CQMEM, err: %d", err);
+		pthread_mutex_unlock(&admin->mutex);
 		return err;
 	}
 
+	state->n_qps = n_qps;
 	for (int i = 0; i < n_qps; i++) {
 		err = xnvme_be_bam_queue_init(state, i);
 		if (err) {
 			XNVME_DEBUG("FAILED: could not allocate QP: %d, err: %d", i, err);
+			pthread_mutex_unlock(&admin->mutex);
 			return err;
 		}
 	}
@@ -253,9 +290,11 @@ xnvme_be_bam_dev_open(struct xnvme_dev *dev)
 	err = cudaHostRegister(dev, sizeof(*dev), cudaHostRegisterDefault);
 	if (err) {
 		XNVME_DEBUG("FAILED: could not map dev memory, err: %d", err);
+		pthread_mutex_unlock(&admin->mutex);
 		return err;
 	}
 
+	pthread_mutex_unlock(&admin->mutex);
 
 	return 0;
 }
@@ -264,14 +303,21 @@ void
 xnvme_be_bam_dev_close(struct xnvme_dev *dev)
 {
 	struct xnvme_be_bam_state *state = (struct xnvme_be_bam_state *)dev->be.state;
+	struct local_admin *admin;
 	int err;
 
-	for (int i = 0; i < XNVME_BE_BAM_NQUEUES_MAX; i++) {
+	admin = (struct local_admin *)((uint8_t *)state->buf + state->ctrlr->page_size * 3);
+	pthread_mutex_lock(&admin->mutex);
+
+	for (int i = 0; i < state->n_qps; i++) {
 		err = xnvme_be_bam_queue_term(state, i);
 		if (err) {
+			pthread_mutex_unlock(&admin->mutex);
 			XNVME_DEBUG("FAILED: could not terminate QP: %d, err: %d", i, err);
 		}
 	}
+
+	pthread_mutex_unlock(&admin->mutex);
 
 	cudaFree(state->sq);
 	cudaFree(state->cq);
@@ -280,6 +326,17 @@ xnvme_be_bam_dev_close(struct xnvme_dev *dev)
 	nvm_aq_destroy(state->aq);
 	cudaHostUnregister((void *)state->ctrlr->mm_ptr);
 	cudaHostUnregister(state->ctrlr);
+
+	if (shmdt(state->buf) < 0) {
+		XNVME_DEBUG("FAILED: could not detach the shared memory segment, for shmid: %d",
+			     g_shmid_shared);
+	}
+
+	if (state->primary && shmctl(g_shmid_shared, IPC_RMID, NULL)) {
+		XNVME_DEBUG("FAILED: could not remove the shared memory segment, for shmid: %d",
+			    g_shmid_shared);
+	}
+
 	nvm_ctrl_free(state->ctrlr);
 	cudaHostUnregister(dev);
 }

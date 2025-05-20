@@ -30,7 +30,7 @@ extern "C" {
 #include <xnvme_be.h>
 #include <xnvme_queue.h>
 
-#define XNVME_BE_BAM_NQUEUES_MAX 128
+#define XNVME_BE_BAM_NQUEUES_MAX 15
 #define XNVME_BE_BAM_QD_MAX      1024
 
 struct xnvme_be_bam_state {
@@ -42,9 +42,12 @@ struct xnvme_be_bam_state {
 	nvm_dma_t **cq_mem;
 
 	struct skiplist *list;
+	void *buf;
 	simt::atomic<uint64_t, simt::thread_scope_device> queue_counter;
 
-	uint8_t _rvds[64];
+	uint8_t primary;
+	uint8_t n_qps;
+	uint8_t _rvds[54];
 };
 XNVME_STATIC_ASSERT(sizeof(struct xnvme_be_bam_state) == XNVME_BE_STATE_NBYTES, "Incorrect size")
 

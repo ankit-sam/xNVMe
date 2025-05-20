@@ -7,6 +7,12 @@
 
 #include <libxnvme.h>
 #include <stdbool.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <sys/ipc.h>
+#include <sys/shm.h>
 #include <xnvme_be.h>
 
 enum xnvme_dev_type {
@@ -40,6 +46,8 @@ struct xnvme_dev {
 	struct xnvme_opts opts; ///< Options
 };
 // XNVME_STATIC_ASSERT(sizeof(struct xnvme_ident) == 768, "Incorrect size")
+
+#define SHM_KEY 1234
 
 int
 xnvme_dev_alloc(struct xnvme_dev **dev);

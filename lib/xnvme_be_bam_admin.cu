@@ -17,6 +17,7 @@ xnvme_be_bam_sync_cmd_admin(struct xnvme_cmd_ctx *ctx, void *dbuf, size_t dbuf_n
 {
 	struct xnvme_be_bam_state *state = (xnvme_be_bam_state *)ctx->dev->be.state;
 	struct xnvme_be_bam_memory *m;
+	struct local_admin *admin;
 	nvm_cmd_t *cmd = (nvm_cmd_t *)&ctx->cmd;
 	nvm_cpl_t *cpl = (nvm_cpl_t *)&ctx->cpl;
 	uint64_t offset, remainder, prp1, prp2;
@@ -44,7 +45,11 @@ xnvme_be_bam_sync_cmd_admin(struct xnvme_cmd_ctx *ctx, void *dbuf, size_t dbuf_n
 		nvm_cmd_data_ptr(cmd, prp1, prp2);
 	}
 
+	admin = (struct local_admin *)((uint8_t *)state->buf + state->ctrlr->page_size * 3);
+	pthread_mutex_lock(&admin->mutex);
+
 	err = nvm_raw_rpc(state->aq, cmd, cpl);
+	pthread_mutex_unlock(&admin->mutex);
 	if (!nvm_ok(err)) {
 		XNVME_DEBUG("FAILED: nvm_raw_rpc(), err: %s", nvm_strerror(err));
 		return err;

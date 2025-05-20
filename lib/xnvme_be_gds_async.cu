@@ -30,7 +30,8 @@ xnvme_be_gds_queue_init(struct xnvme_queue *q, int XNVME_UNUSED(opts))
 	struct xnvme_queue_gds *queue = (struct xnvme_queue_gds *)q;
 	struct xnvme_be_gds_state *state = (struct xnvme_be_gds_state*)queue->base.dev->be.state;
 	void *cq_buf, *sq_buf;
-	int err, qid = ++state->qid;
+	struct local_admin *admin;
+	int err, qid = state->qid++, qloc = state->qloc++;
 
 	// Whether the controller requires contiguous phys mem for queues
 	bool contiguous_queues = !!_RB(*_REG(state->ctrlr->mm_ptr, 0x0000, 64), 16, 16);
@@ -38,6 +39,11 @@ xnvme_be_gds_queue_init(struct xnvme_queue *q, int XNVME_UNUSED(opts))
 	// NVMe queue capacity must be one larger than the requested capacity
 	// since only n-1 slots in an NVMe queue may be used
 	int qd = queue->base.capacity + 1;
+
+	if (qid >= 31) {
+		XNVME_DEBUG("FAILED: can't allocate any more I/O queues");
+		return -EINVAL;
+	}
 
 	err = posix_memalign(&cq_buf, 4096, qd*sizeof(nvm_cpl_t));
 	if (err) {
@@ -73,20 +79,26 @@ xnvme_be_gds_queue_init(struct xnvme_queue *q, int XNVME_UNUSED(opts))
 		return err;
 	}
 
-	err = nvm_admin_cq_create(state->aq, &state->cq[qid], qid, queue->cq_mem, 0, qd, false);
+	admin = (struct local_admin *)((uint8_t *)state->buf + state->ctrlr->page_size * 3);
+	pthread_mutex_lock(&admin->mutex);
+
+	err = nvm_admin_cq_create(state->aq, &state->cq[qloc], qid, queue->cq_mem, 0, qd, false);
 	if (err) {
 		XNVME_DEBUG("FAILED: could not create I/O completion queue, err: %d", err);
+		pthread_mutex_unlock(&admin->mutex);
 		return err;
 	}
 
-	err = nvm_admin_sq_create(state->aq, &state->sq[qid], &state->cq[qid], qid, queue->sq_mem, 0, qd, false);
+	err = nvm_admin_sq_create(state->aq, &state->sq[qloc], &state->cq[qloc], qid, queue->sq_mem, 0, qd, false);
 	if (err) {
 		XNVME_DEBUG("FAILED: could not create I/O submission queue, err: %d", err);
+		pthread_mutex_unlock(&admin->mutex);
 		return err;
 	}
+	pthread_mutex_unlock(&admin->mutex);
 
-	queue->cq = &state->cq[qid];
-	queue->sq = &state->sq[qid];
+	queue->cq = &state->cq[qloc];
+	queue->sq = &state->sq[qloc];
 
 	return 0;
 }
@@ -96,19 +108,26 @@ xnvme_be_gds_queue_term(struct xnvme_queue *q)
 {
 	struct xnvme_queue_gds *queue = (struct xnvme_queue_gds *)q;
 	struct xnvme_be_gds_state *state = (struct xnvme_be_gds_state*)queue->base.dev->be.state;
+	struct local_admin *admin;
 	int err;
+
+	admin = (struct local_admin *)((uint8_t *)state->buf + state->ctrlr->page_size * 3);
+	pthread_mutex_lock(&admin->mutex);
 
 	err = nvm_admin_sq_delete(state->aq, queue->sq, queue->cq);
 	if (err) {
 		XNVME_DEBUG("FAILED: could not delete I/O submission queue, err: %d", err);
+		pthread_mutex_unlock(&admin->mutex);
 		return err;
 	}
 
 	err = nvm_admin_cq_delete(state->aq, queue->cq);
 	if (err) {
 		XNVME_DEBUG("FAILED: could not delete I/O completion queue, err: %d", err);
+		pthread_mutex_unlock(&admin->mutex);
 		return err;
 	}
+	pthread_mutex_unlock(&admin->mutex);
 
 	nvm_dma_unmap(queue->cq_mem);
 	nvm_dma_unmap(queue->sq_mem);

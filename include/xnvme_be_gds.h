@@ -31,7 +31,7 @@ extern "C" {
 #include <xnvme_be.h>
 #include <xnvme_queue.h>
 
-#define XNVME_BE_GDS_NQUEUES_MAX 128
+#define XNVME_BE_GDS_NQUEUES_MAX 15
 
 struct xnvme_be_gds_state {
 	nvm_ctrl_t *ctrlr;
@@ -39,9 +39,11 @@ struct xnvme_be_gds_state {
 	nvm_queue_t *sq;
 	nvm_queue_t *cq;
 	struct skiplist *list;
+	void *buf;
 	uint8_t qid;
+	uint8_t qloc;
 
-	uint8_t _rvds[87];
+	uint8_t _rvds[78];
 };
 XNVME_STATIC_ASSERT(sizeof(struct xnvme_be_gds_state) == XNVME_BE_STATE_NBYTES, "Incorrect size")
 
