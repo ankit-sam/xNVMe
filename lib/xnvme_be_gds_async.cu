@@ -58,26 +58,19 @@ xnvme_be_gds_queue_init(struct xnvme_queue *q, int XNVME_UNUSED(opts))
 		return -ENOMEM;
 	}
 
-	err = posix_memalign(&sq_buf, 4096, qd*sizeof(nvm_cmd_t));
+	err = posix_memalign(&sq_buf, 4096, qd * (sizeof(nvm_cmd_t) + 4096));
 	if (err) {
 		XNVME_DEBUG("FAILED: could not allocate memory, err: %d", err);
 		nvm_dma_unmap(queue->cq_mem);
 		return err;
 	}
 
-	err = nvm_dma_map_host(&queue->sq_mem, state->ctrlr, sq_buf, qd*sizeof(nvm_cmd_t));
+	err = nvm_dma_map_host(&queue->sq_mem, state->ctrlr, sq_buf, qd * (sizeof(nvm_cmd_t) + 4096));
 	if (err) {
 		XNVME_DEBUG("FAILED: could not dma map memory, err: %d", err);
 		nvm_dma_unmap(queue->cq_mem);
 		free(sq_buf);
 		return err;
-	}
-
-	if (contiguous_queues && !queue->sq_mem->contiguous) {
-		XNVME_DEBUG("FAILED: controller requires contiguous memory for queues, but SQ mem is not contiguous");
-		nvm_dma_unmap(queue->cq_mem);
-		nvm_dma_unmap(queue->sq_mem);
-		return -ENOMEM;
 	}
 
 	err = nvm_admin_cq_create(state->aq, &state->cq[qid], qid, queue->cq_mem, 0, qd, false);
@@ -162,9 +155,12 @@ xnvme_be_gds_async_cmd_io(struct xnvme_cmd_ctx *ctx, void *dbuf, size_t dbuf_nby
 	struct xnvme_queue_gds *queue = (struct xnvme_queue_gds *)ctx->async.queue;
 	struct xnvme_be_gds_state *state = (struct xnvme_be_gds_state*)queue->base.dev->be.state;
 	uint32_t cmd_id = ((struct xnvme_cmd_ctx_entry *)ctx)->id;
-	struct xnvme_be_gds_memory *m;
 	nvm_cmd_t *cmd;
-	uint64_t offset, remainder, prp1, prp2 = 0;
+	nvm_dma_t *mem;
+	int err;
+	uint64_t offset;
+	size_t n_pages;
+	uint16_t prp_list;
 
 	if (queue->base.outstanding == queue->base.capacity) {
 		XNVME_DEBUG("FAILED: queue is full");
@@ -180,25 +176,20 @@ xnvme_be_gds_async_cmd_io(struct xnvme_cmd_ctx *ctx, void *dbuf, size_t dbuf_nby
 	*cmd = *((nvm_cmd_t *)&ctx->cmd);
 
 	if (dbuf) {
-		m = xnvme_be_gds_memory_find(state, dbuf);
-		if (!m) {
-			XNVME_DEBUG("FAILED: couldn't find memory in skiplist");
-			return -ENOENT;
+		err = nvm_dma_map_host(&mem, state->ctrlr, dbuf, dbuf_nbytes);
+		if (err) {
+			XNVME_DEBUG("FAILED: could not dma map memory, err: %d", err);
+			return -ENOMEM;
 		}
 
-		if (dbuf_nbytes > m->mem->page_size * 2) {
-			XNVME_DEBUG("FAILED: more than 2 PRP entries required");
-			return -EINVAL;
-		}
+		prp_list = (cmd_id % queue->sq->qs) + 1;
+		offset = ((uint64_t)dbuf - (uint64_t)mem->vaddr) / mem->page_size;
 
-		offset = ((uint64_t)dbuf - (uint64_t)m->mem->vaddr)/m->mem->page_size;
-		remainder = (((uint64_t)dbuf - (uint64_t)m->mem->vaddr)%m->mem->page_size);
-		prp1 = m->mem->ioaddrs[offset] + remainder;
-		if (dbuf_nbytes > m->mem->page_size) {
-			prp2 = prp1 + m->mem->page_size;
-		}
+		n_pages = dbuf_nbytes / mem->page_size;
+		nvm_cmd_data1(cmd, mem->page_size, n_pages, NVM_DMA_OFFSET(queue->sq_mem, prp_list),
+			queue->sq_mem->ioaddrs[prp_list], &mem->ioaddrs[offset]);
 
-		nvm_cmd_data_ptr(cmd, prp1, prp2);
+		nvm_dma_unmap(mem);
 	}
 
 	nvm_sq_submit(queue->sq);
