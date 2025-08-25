@@ -9,6 +9,22 @@ extern "C" {
 #ifdef XNVME_BE_BAM_ENABLED
 #include <xnvme_be_bam.h>
 
+uint32_t
+xnvme_array_find_first_and_set(uint8_t *qids, uint32_t nqps) {
+	uint8_t qid = 0;
+
+	for (uint32_t i = 1; i < nqps; i++) {
+		if (qids[i]) {
+			continue;
+		} else {
+			qid = i;
+			qids[i] = 1;
+			return qid;
+		}
+	}
+	return qid;
+}
+
 struct xnvme_be_mixin g_xnvme_be_mixin_bam[] = {
 	{
 		.mtype = XNVME_BE_ASYNC,

@@ -19,7 +19,7 @@ xnvme_be_bam_queue_init(struct xnvme_queue *q, int XNVME_UNUSED(opts))
 	struct xnvme_be_bam_state *state = (struct xnvme_be_bam_state*)queue->base.dev->be.state;
 	void *cq_buf, *sq_buf;
 	struct local_admin *admin;
-	int err, qid = ++state->qid;
+	int err, qid;
 
 	// Whether the controller requires contiguous phys mem for queues
 	bool contiguous_queues = !!_RB(*_REG(state->ctrlr->mm_ptr, 0x0000, 64), 16, 16);
@@ -27,11 +27,6 @@ xnvme_be_bam_queue_init(struct xnvme_queue *q, int XNVME_UNUSED(opts))
 	// NVMe queue capacity must be one larger than the requested capacity
 	// since only n-1 slots in an NVMe queue may be used
 	int qd = queue->base.capacity + 1;
-
-	if (qid >= 31) {
-		XNVME_DEBUG("FAILED: can't allocate any more I/O queues");
-		return -EINVAL;
-	}
 
 	err = posix_memalign(&cq_buf, 4096, qd*sizeof(nvm_cpl_t));
 	if (err) {
@@ -84,6 +79,14 @@ xnvme_be_bam_queue_init(struct xnvme_queue *q, int XNVME_UNUSED(opts))
 			return -ENOMEM;
 	}
 	pthread_mutex_lock(&admin->mutex);
+	qid = xnvme_array_find_first_and_set(admin->qids, admin->n_qps);
+	if (!qid) {
+		err = -ENOMEM;
+		XNVME_DEBUG("FAILED: could not find free queue slot, err: %d", err);
+		pthread_mutex_unlock(&admin->mutex);
+		return err;
+	}
+
 	err = nvm_admin_cq_create(state->aq, queue->cq, qid, queue->cq_mem, 0, qd, false);
 	if (err) {
 		XNVME_DEBUG("FAILED: could not create I/O completion queue, err: %d", err);
@@ -105,6 +108,8 @@ xnvme_be_bam_queue_init(struct xnvme_queue *q, int XNVME_UNUSED(opts))
 		free(queue->sq);
 		return err;
 	}
+	queue->qid = qid;
+
 	pthread_mutex_unlock(&admin->mutex);
 
 	return 0;
@@ -133,6 +138,7 @@ xnvme_be_bam_queue_term(struct xnvme_queue *q)
 		pthread_mutex_unlock(&admin->mutex);
 		return err;
 	}
+	admin->qids[queue->qid] = 0;
 	pthread_mutex_unlock(&admin->mutex);
 
 	nvm_dma_unmap(queue->cq_mem);

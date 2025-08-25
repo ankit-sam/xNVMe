@@ -47,7 +47,8 @@ struct xnvme_be_bam_state {
 
 	uint8_t primary;
 	uint16_t n_qps;
-	uint8_t _rvds[35];
+	uint8_t used_qids[32];
+	uint8_t _rvds[3];
 };
 XNVME_STATIC_ASSERT(sizeof(struct xnvme_be_bam_state) == XNVME_BE_STATE_NBYTES, "Incorrect size")
 
@@ -64,10 +65,14 @@ struct xnvme_queue_bam {
 	nvm_dma_t *cq_mem;
 	nvm_dma_t *sq_mem;
 
-	uint8_t _rsvd[200];
+	uint32_t qid;
+	uint8_t _rsvd[196];
 };
 XNVME_STATIC_ASSERT(sizeof(struct xnvme_queue_bam) == XNVME_BE_QUEUE_STATE_NBYTES,
 		    "Incorrect size")
+
+uint32_t
+xnvme_array_find_first_and_set(uint8_t *qids, uint32_t nqps);
 
 __device__ __host__ struct xnvme_be_bam_memory *
 xnvme_be_bam_memory_find(struct xnvme_be_bam_state *state, void *buf);
