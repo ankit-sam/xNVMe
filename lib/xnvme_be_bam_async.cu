@@ -207,6 +207,7 @@ xnvme_be_bam_cmd_data(struct xnvme_queue_bam *q, void *dbuf, uint64_t dbuf_nbyte
 		nvm_cmd_data_ptr(cmd, prp1, prp2);
 }
 
+#if 0
 int
 xnvme_be_bam_async_cmd_io(struct xnvme_cmd_ctx *ctx, void *dbuf, size_t dbuf_nbytes, void *XNVME_UNUSED(mbuf),
 			   size_t XNVME_UNUSED(mbuf_nbytes))
@@ -249,6 +250,57 @@ xnvme_be_bam_async_cmd_io(struct xnvme_cmd_ctx *ctx, void *dbuf, size_t dbuf_nby
 
 	return 0;
 }
+#else
+int
+xnvme_be_bam_async_cmd_io(struct xnvme_cmd_ctx *ctx, void *dbuf, size_t dbuf_nbytes, void *XNVME_UNUSED(mbuf),
+			   size_t XNVME_UNUSED(mbuf_nbytes))
+{
+	struct xnvme_queue_bam *queue = (struct xnvme_queue_bam *)ctx->async.queue;
+	struct xnvme_be_bam_state *state = (struct xnvme_be_bam_state*)queue->base.dev->be.state;
+	uint32_t cmd_id = ((struct xnvme_cmd_ctx_entry *)ctx)->id;
+	nvm_cmd_t *cmd;
+	nvm_dma_t *mem;
+	int err;
+	uint64_t offset;
+	size_t n_pages;
+	uint16_t prp_list;
+
+	if (queue->base.outstanding == queue->base.capacity) {
+		XNVME_DEBUG("FAILED: queue is full");
+		return -EBUSY;
+	}
+
+	ctx->cmd.common.cid = cmd_id;
+	cmd = nvm_sq_enqueue(queue->sq);
+	if (!cmd) {
+		XNVME_DEBUG("FAILED: queue full, mismatch between xNVMe queue and libnvm queue");
+		return -EBUSY;
+	}
+	*cmd = *((nvm_cmd_t *)&ctx->cmd);
+
+	if (dbuf) {
+		err = nvm_dma_map_host(&mem, state->ctrlr, dbuf, dbuf_nbytes);
+		if (err) {
+			XNVME_DEBUG("FAILED: could not dma map memory, err: %d", err);
+			return -ENOMEM;
+		}
+
+		prp_list = (cmd_id % queue->sq->qs) + 1;
+		offset = ((uint64_t)dbuf - (uint64_t)mem->vaddr) / mem->page_size;
+
+		n_pages = dbuf_nbytes / mem->page_size;
+		nvm_cmd_data1(cmd, mem->page_size, n_pages, NVM_DMA_OFFSET(queue->sq_mem, prp_list),
+			queue->sq_mem->ioaddrs[prp_list], &mem->ioaddrs[offset]);
+
+		nvm_dma_unmap(mem);
+	}
+
+	nvm_sq_submit(queue->sq);
+	queue->base.outstanding++;
+
+	return 0;
+}
+#endif
 
 int
 xnvme_be_bam_async_cmd_iov(struct xnvme_cmd_ctx *ctx, struct iovec *dvec, size_t dvec_cnt,
